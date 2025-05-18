@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>顔加工ツール - 血を顔の中だけに描画</title>
+  <script defer src="js/face-api.min.js"></script>
+  <style>
+    body {
+      background: #111;
+      color: white;
+      text-align: center;
+      font-family: sans-serif;
+    }
+    canvas {
+      border: 1px solid #555;
+      margin-top: 10px;
+      background: #222;
+    }
+    button {
+      margin: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>返り血とバツ印をつけるアプリ</h1>
+  <input type="file" id="upload" accept="image/*"><br><br>
+
+  <div>
+    <button id="bloodBtn1">返り血パターン1</button>
+    <button id="bloodBtn2">返り血パターン2</button>
+    <button id="xMarkBtn">顔にバツ印</button>
+    <button id="saveBtn">画像をダウンロード</button>
+  </div>
+
+  <canvas id="canvas" width="512" height="512"></canvas>
+
+  <script>
+    let img = null;
+    let landmarks = null;
+    let faceOutline = [];
+
+    const bloodImage1 = new Image();
+    bloodImage1.src = 'blood1.png';
+    const bloodImage2 = new Image();
+    bloodImage2.src = 'blood2.png';
+    const xMarkImage = new Image();
+    xMarkImage.src = 'xmark.png'; // 透過PNGのバツ印画像
+
+    window.onload = async () => {
+      await faceapi.nets.tinyFaceDetector.loadFromUri('./models');
+      await faceapi.nets.faceLandmark68Net.loadFromUri('./models');
+      console.log("✅ モデル読み込み完了");
+
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      document.getElementById("upload").addEventListener("change", async e => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        img = new Image();
+        img.onload = async () => {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+
+          const result = await faceapi
+            .detectSingleFace(canvas, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks();
+
+          if (!result || !result.landmarks) {
+            alert("顔が検出できませんでした。");
+            return;
+          }
+
+          landmarks = result.landmarks;
+          faceOutline = buildExtendedFaceRegion(landmarks);
+        };
+        img.src = URL.createObjectURL(file);
+      });
+
+      document.getElementById("bloodBtn1").onclick = () => {
+        if (!landmarks || !img) return;
+        ctx.drawImage(img, 0, 0);
+        drawBlood(ctx, bloodImage1);
+      };
+
+      document.getElementById("bloodBtn2").onclick = () => {
+        if (!landmarks || !img) return;
+        ctx.drawImage(img, 0, 0);
+        drawBlood(ctx, bloodImage2);
+      };
+
+      document.getElementById("xMarkBtn").onclick = () => {
+        if (!landmarks || !img || !xMarkImage.complete) return;
+        ctx.drawImage(img, 0, 0);
+        drawXMark(ctx);
+      };
+
+      document.getElementById("saveBtn").onclick = () => {
+        const link = document.createElement('a');
+        link.download = 'processed_image.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      };
+    };
+
+    function drawBlood(ctx, bloodImage) {
+      if (!faceOutline || faceOutline.length === 0) return;
+
+      const left = Math.min(...faceOutline.map(p => p.x));
+      const top = Math.min(...faceOutline.map(p => p.y));
+      const right = Math.max(...faceOutline.map(p => p.x));
+      const bottom = Math.max(...faceOutline.map(p => p.y));
+      const width = right - left;
+      const height = bottom - top;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(faceOutline[0].x, faceOutline[0].y);
+      for (let i = 1; i < faceOutline.length; i++) {
+        ctx.lineTo(faceOutline[i].x, faceOutline[i].y);
+      }
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(bloodImage, left, top, width, height);
+      ctx.restore();
+    }
+
+    function drawXMark(ctx) {
+      const jaw = landmarks.getJawOutline();
+      const left = Math.min(...jaw.map(p => p.x));
+      const top = Math.min(...jaw.map(p => p.y));
+      const right = Math.max(...jaw.map(p => p.x));
+      const bottom = Math.max(...jaw.map(p => p.y));
+
+      const width = right - left;
+      const height = bottom - top;
+
+      ctx.drawImage(xMarkImage, left - width * 0.1, top - height * 0.5, width * 1.2, height * 1.8);
+    }
+
+    function buildExtendedFaceRegion(landmarks) {
+      const jaw = landmarks.getJawOutline();
+      const leftBrow = landmarks.getLeftEyeBrow();
+      const rightBrow = landmarks.getRightEyeBrow();
+      const offset = 20;
+
+      const forehead = [
+        ...rightBrow.map(p => ({ x: p.x, y: p.y - offset })).reverse(),
+        ...leftBrow.map(p => ({ x: p.x, y: p.y - offset }))
+      ];
+      return [...jaw, ...forehead];
+    }
+  </script>
+</body>
+</html>
